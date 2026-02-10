@@ -3,13 +3,19 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3.10-dev \
     python3-pip \
     git \
     wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 18
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
@@ -52,17 +58,23 @@ RUN pip install --no-cache-dir -r requirements.txt || echo "Continuing despite e
 # Install StreamDiffusionV2
 RUN python setup.py develop || python setup.py install || echo "Setup completed"
 
+# Build frontend
+WORKDIR /app/demo/frontend
+RUN npm install && npm run build
+
 # Create model directories
 RUN mkdir -p /app/wan_models /app/ckpts
 
-# Use Python module instead of CLI command
+WORKDIR /app
+
+# Create entrypoint script
 RUN cat > /app/entrypoint.sh << 'EOF'
 #!/bin/bash
 set -e
 
 echo "=== Starting StreamDiffusionV2 ==="
 
-# Download models using Python module (works even if CLI isn't in PATH)
+# Download models using Python module
 python3 << 'PYEOF'
 import os
 from huggingface_hub import snapshot_download
@@ -103,32 +115,24 @@ else:
     print("Checkpoint already exists, skipping download")
 PYEOF
 
-echo "Models ready! Starting application..."
+echo "Models ready! Starting demo..."
 
-# Find and run the demo app
-if [ -d "/app/demo" ] && [ -f "/app/demo/app.py" ]; then
-    echo "Found demo at /app/demo/app.py"
-    cd /app/demo
-    python app.py --server_name 0.0.0.0 --server_port 7860
-elif [ -f "/app/app.py" ]; then
-    echo "Found app at /app/app.py"
-    python /app/app.py --server_name 0.0.0.0 --server_port 7860
-elif [ -f "/app/streamv2v/inference_pipe.py" ]; then
-    echo "Found inference script, starting basic server..."
-    python -m http.server 7860
-else
-    echo "ERROR: No demo app found!"
-    echo "Directory contents:"
-    ls -la /app/
-    if [ -d "/app/demo" ]; then
-        echo "Demo directory contents:"
-        ls -la /app/demo/
-    fi
-    echo ""
-    echo "Available Python files:"
-    find /app -name "*.py" -type f | head -20
-    exit 1
-fi
+cd /app/demo
+
+# Start the demo with proper arguments
+# Use environment variables for configuration
+NUM_GPUS=${NUM_GPUS:-1}
+GPU_IDS=${GPU_IDS:-0}
+STEP=${STEP:-2}
+
+echo "Starting with NUM_GPUS=$NUM_GPUS GPU_IDS=$GPU_IDS STEP=$STEP"
+
+exec python main.py \
+    --port 7860 \
+    --host 0.0.0.0 \
+    --num_gpus $NUM_GPUS \
+    --gpu_ids $GPU_IDS \
+    --step $STEP
 EOF
 
 RUN chmod +x /app/entrypoint.sh
