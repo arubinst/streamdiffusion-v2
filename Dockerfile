@@ -32,7 +32,7 @@ RUN pip install --no-cache-dir \
 # Install xformers
 RUN pip install --no-cache-dir xformers==0.0.22.post7 --no-deps
 
-# Install Python dependencies
+# Install Python dependencies (added markdown2 and other common ones)
 RUN pip install --no-cache-dir \
     "huggingface_hub[cli]" \
     diffusers \
@@ -43,9 +43,17 @@ RUN pip install --no-cache-dir \
     opencv-python-headless \
     numpy \
     Pillow \
-    gradio && \
-    pip install --no-cache-dir -r requirements.txt || true && \
-    python setup.py develop || true
+    gradio \
+    markdown2 \
+    pyyaml \
+    tqdm \
+    psutil
+
+# Try to install from requirements.txt (might have more dependencies)
+RUN pip install --no-cache-dir -r requirements.txt || true
+
+# Install the package
+RUN python setup.py develop || true
 
 # Build frontend
 WORKDIR /app/demo/frontend
