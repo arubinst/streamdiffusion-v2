@@ -33,8 +33,9 @@ RUN pip install --no-cache-dir \
 # Install xformers (pre-built for CUDA 12.1)
 RUN pip install --no-cache-dir xformers==0.0.22.post7
 
-# Install remaining dependencies without xformers
+# Install HuggingFace CLI and other dependencies
 RUN pip install --no-cache-dir \
+    huggingface_hub[cli] \
     diffusers>=0.25.0 \
     transformers>=4.36.0 \
     accelerate>=0.25.0 \
@@ -43,8 +44,7 @@ RUN pip install --no-cache-dir \
     opencv-python-headless \
     numpy \
     Pillow \
-    gradio \
-    huggingface_hub
+    gradio
 
 # Install any remaining requirements (skip failures)
 RUN pip install --no-cache-dir -r requirements.txt || echo "Continuing despite errors..."
@@ -55,29 +55,62 @@ RUN python setup.py develop || python setup.py install || echo "Setup completed"
 # Create model directories
 RUN mkdir -p /app/wan_models /app/ckpts
 
-# Startup script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "=== Starting StreamDiffusionV2 ==="\n\
-if [ ! -d "/app/wan_models/Wan2.1-T2V-1.3B" ]; then\n\
-    echo "Downloading Wan2.1-T2V-1.3B model (this may take a while on first run)..."\n\
-    huggingface-cli download --resume-download Wan-AI/Wan2.1-T2V-1.3B \\\n\
-        --local-dir /app/wan_models/Wan2.1-T2V-1.3B || echo "Model download failed, will retry at runtime"\n\
-fi\n\
-if [ ! -d "/app/ckpts/wan_causal_dmd_v2v" ]; then\n\
-    echo "Downloading checkpoint..."\n\
-    huggingface-cli download --resume-download jerryfeng/StreamDiffusionV2 \\\n\
-        --local-dir /app/ckpts --include "wan_causal_dmd_v2v/*" || echo "Checkpoint download failed, will retry at runtime"\n\
-fi\n\
-echo "Models ready! Starting application..."\n\
-cd /app/demo || cd /app\n\
-if [ -f "app.py" ]; then\n\
-    python app.py --server_name 0.0.0.0 --server_port 7860\n\
-else\n\
-    echo "Demo app not found, starting Python shell for debugging"\n\
-    python\n\
-fi\n\
-' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Improved startup script
+RUN cat > /app/entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "=== Starting StreamDiffusionV2 ==="
+
+# Check if huggingface-cli is available
+if ! command -v huggingface-cli &> /dev/null; then
+    echo "ERROR: huggingface-cli not found, installing..."
+    pip install -U "huggingface_hub[cli]"
+fi
+
+# Download models if not present
+if [ ! -d "/app/wan_models/Wan2.1-T2V-1.3B" ]; then
+    echo "Downloading Wan2.1-T2V-1.3B model (this may take 10-15 minutes)..."
+    huggingface-cli download --resume-download Wan-AI/Wan2.1-T2V-1.3B \
+        --local-dir /app/wan_models/Wan2.1-T2V-1.3B || {
+        echo "ERROR: Failed to download model"
+        exit 1
+    }
+fi
+
+if [ ! -d "/app/ckpts/wan_causal_dmd_v2v" ]; then
+    echo "Downloading checkpoint..."
+    huggingface-cli download --resume-download jerryfeng/StreamDiffusionV2 \
+        --local-dir /app/ckpts --include "wan_causal_dmd_v2v/*" || {
+        echo "ERROR: Failed to download checkpoint"
+        exit 1
+    }
+fi
+
+echo "Models ready! Starting application..."
+
+# Find and run the demo app
+if [ -d "/app/demo" ] && [ -f "/app/demo/app.py" ]; then
+    echo "Found demo at /app/demo/app.py"
+    cd /app/demo
+    python app.py --server_name 0.0.0.0 --server_port 7860
+elif [ -f "/app/app.py" ]; then
+    echo "Found app at /app/app.py"
+    python /app/app.py --server_name 0.0.0.0 --server_port 7860
+else
+    echo "ERROR: No demo app found!"
+    echo "Directory contents:"
+    ls -la /app/
+    if [ -d "/app/demo" ]; then
+        echo "Demo directory contents:"
+        ls -la /app/demo/
+    fi
+    echo "Starting Python shell for debugging..."
+    python
+fi
+EOF
+
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 7860
 
