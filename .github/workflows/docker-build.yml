@@ -3,14 +3,14 @@ name: Build StreamDiffusion Docker Image
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # Allows manual trigger from Actions tab
+  workflow_dispatch:
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write  # Critical: allows pushing to ghcr.io
+      packages: write
     
     steps:
     - name: Checkout code
@@ -43,5 +43,4 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        # REMOVED cache lines - they're causing the blob error
